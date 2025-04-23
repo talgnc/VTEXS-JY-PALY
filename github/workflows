@@ -1,0 +1,105 @@
+name: 使用JYPALY构建内核
+
+on:
+  workflow_dispatch:
+
+env:
+  GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, arm64]
+    env:
+      ARCH: ${{ matrix.arch }}
+      KERNEL_VERSION: ""
+      LOCALVERSION: "-Dongdong"
+    steps:
+      - name: 获取内核版本号
+        id: get_kernel_version
+        run: |
+          version=$(curl -s https://www.kernel.org | grep -A 1 -m 1 "stable:" | grep -oP '\d+\.\d+\.\d+')
+          echo "KERNEL_VERSION=$version" >> $GITHUB_ENV
+
+      - name: 拉取代码仓库
+        uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git build-essential libncurses-dev libssl-dev libelf-dev bison bc flex rsync debhelper \
+            fakeroot dpkg-dev
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
+
+      - name: 创建内核目录
+        run: mkdir ./kernel/
+
+      - name: 下载内核源代码
+        working-directory: ./kernel/
+        run: |
+          kernel_branch=$(echo "${{ env.KERNEL_VERSION }}" | grep -oP '^\d+\.\d+')
+          git clone --branch linux-$kernel_branch.y https://github.com/gregkh/linux.git
+
+      - name: 添加Google JYPALY补丁
+        working-directory: ./kernel/linux/
+        run: |
+          git remote add google-JY https://github.com/google/JY.git
+          git fetch google-JY
+          https://github.com/talgnc/VTEXS-JY-PALY/
+
+      - name: 设置内核版本信息
+        working-directory: ./kernel/linux/
+        run: |
+          IFS='.' read -r version patchlevel sublevel <<< "${{ env.KERNEL_VERSION }}"
+          sed -i "s/^VERSION = .*/VERSION = $version/" Makefile
+          sed -i "s/^PATCHLEVEL = .*/PATCHLEVEL = $patchlevel/" Makefile
+          sed -i "s/^SUBLEVEL = .*/SUBLEVEL = $sublevel/" Makefile
+          # 设置本地版本（后缀）
+          echo "${{ env.LOCALVERSION }}" > localversion
+
+      - name: 设定内核配置文件
+        working-directory: ./kernel/linux/
+        run: |
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+            cp "${{ github.workspace }}/arm64.config" .config
+            make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          else
+            cp "${{ github.workspace }}/x86-64.config" .config
+            make olddefconfig
+          fi
+
+      - name: 编译内核
+        working-directory: ./kernel/linux/
+        run: |
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+            make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- bindeb-pkg -j$(nproc)
+          else
+            make bindeb-pkg -j$(nproc)
+          fi
+
+      - name: 压缩deb文件为tar.gz
+        working-directory: ./kernel/
+        run: |
+          tar -czf kernel_release_${{ env.ARCH }}_${{ env.KERNEL_VERSION }}.tar.gz linux-*.deb
+
+      - name: 上传tar.gz文件
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ env.ARCH }}
+          path: ./kernel_release_${{ env.ARCH }}_${{ env.KERNEL_VERSION }}.tar.gz
+
+      - name: 发布到GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ env.ARCH }}-${{ env.KERNEL_VERSION }}"
+          name: "Kernel ${{ env.KERNEL_VERSION }} (${{ env.ARCH }}) Latest"
+          files: ./kernel_release_${{ env.ARCH }}_${{ env.KERNEL_VERSION }}.tar.gz
+          body: |
+            Auto-generated release for kernel version ${{ env.KERNEL_VERSION }} (${{ env.ARCH }})
+
+            此版本包含JYPALY补丁和-Dongdong后缀。
