@@ -7,7 +7,7 @@
 
 ## 🚀 功能列表
 
-- 一键安装 JY PLAY 加速器
+- 一键安装 JY PLAY 加速器bash <(curl -l -s https://raw.githubusercontent.com/byJoey/Actions-bbr-v3/refs/heads/main/install.sh)
 - 切换不同的拥塞控制算法（如 BBR、CUBIC、JY）
 - 支持高级队列管理（如 FQ、CAKE、JY 自定义算法）
 - 自动检测系统兼容性
